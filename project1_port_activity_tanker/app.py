@@ -1,3 +1,11 @@
+"""
+Port Activity Snapshot - Analisis Tren Tanker
+Dashboard interaktif untuk menganalisis tren aktivitas kapal tanker
+di pelabuhan-pelabuhan Indonesia (port calls, volume import & export).
+
+Sumber data: indonesia_data_shipment.csv (2019 - 2026)
+"""
+
 from pathlib import Path
 
 import pandas as pd
@@ -16,8 +24,46 @@ st.set_page_config(
     page_title="Port Activity Snapshot - Tren Tanker",
     page_icon="🛢️",
     layout="wide",
-    initial_sidebar_state="expanded",
+    # "auto" (bukan "expanded"): sidebar otomatis collapsed di layar sempit
+    # (HP) dan tetap terbuka di layar lebar (laptop/desktop), tanpa perlu
+    # deteksi device manual.
+    initial_sidebar_state="auto",
 )
+
+# Sedikit CSS untuk merapikan tampilan di layar sempit (HP):
+# - padding halaman dipangkas biar tidak boros ruang
+# - ukuran angka/label metric dikecilkan sedikit di layar <640px biar tidak wrap
+# - menu titik-tiga bawaan Streamlit (Deploy/Settings) disembunyikan karena
+#   tidak relevan untuk pengunjung publik; hapus blok #stToolbar ini kalau
+#   Anda (sebagai developer) masih perlu mengaksesnya lewat UI app.
+st.markdown(
+    """
+    <style>
+        .block-container {
+            padding-top: 1.5rem;
+            padding-bottom: 2rem;
+            padding-left: 1rem;
+            padding-right: 1rem;
+        }
+        @media (max-width: 640px) {
+            .block-container {
+                padding-top: 1rem;
+                padding-left: 0.6rem;
+                padding-right: 0.6rem;
+            }
+            [data-testid="stMetricValue"] { font-size: 1.25rem; }
+            [data-testid="stMetricLabel"] { font-size: 0.72rem; }
+            h1 { font-size: 1.35rem !important; }
+            h3 { font-size: 1.05rem !important; }
+        }
+        [data-testid="stToolbar"] { visibility: hidden; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+PLOTLY_CONFIG = {"displayModeBar": False}  # toolbar zoom/pan Plotly dimatikan
+                                           # -> lebih bersih & mudah disentuh di HP
 
 VESSEL_TYPES = ["tanker", "container", "dry_bulk", "general_cargo", "roro"]
 VESSEL_LABELS = {
@@ -107,7 +153,7 @@ def pct_delta(curr, prev):
 
 
 # ----------------------------------------------------------------------------
-# HEADER & KPI
+# HEADER & KPI (selalu tampil di atas, di luar tab)
 # ----------------------------------------------------------------------------
 st.title("🛢️ Port Activity Snapshot")
 st.subheader("Analisis Tren Kapal Tanker di Pelabuhan Indonesia")
@@ -156,204 +202,221 @@ c4.metric("Pangsa Tanker dari Total Port Calls", f"{share_tanker:.1f}%")
 st.markdown("---")
 
 # ----------------------------------------------------------------------------
-# TREN PORT CALLS TANKER
+# TAB NAVIGASI
+# Dipecah jadi tab (bukan satu halaman panjang) supaya di HP orang tinggal
+# tap untuk pindah bagian, tidak perlu scroll panjang seperti sebelumnya.
 # ----------------------------------------------------------------------------
-st.markdown("### 📈 Tren Port Calls Tanker")
-
-trend = (
-    dff.set_index("date")
-    .resample(freq)[["portcalls_tanker", "import_tanker", "export_tanker"]]
-    .sum()
-    .reset_index()
+tab_tren, tab_rank, tab_musiman, tab_data = st.tabs(
+    ["📈 Tren", "🏆 Peringkat & Perbandingan", "🗓️ Musiman & Komposisi", "📋 Data"]
 )
-
-fig_calls = px.line(
-    trend,
-    x="date",
-    y="portcalls_tanker",
-    markers=True,
-    labels={"date": "Tanggal", "portcalls_tanker": "Jumlah Port Calls Tanker"},
-)
-fig_calls.update_traces(line_color="#0B5394", fill="tozeroy", fillcolor="rgba(11,83,148,0.12)")
-fig_calls.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10))
-st.plotly_chart(fig_calls, use_container_width=True)
 
 # ----------------------------------------------------------------------------
-# IMPORT VS EXPORT VOLUME
+# TAB 1: TREN PORT CALLS & VOLUME IMPORT/EKSPOR
 # ----------------------------------------------------------------------------
-st.markdown("### ⚖️ Volume Import vs Export Tanker")
+with tab_tren:
+    st.markdown("### 📈 Tren Port Calls Tanker")
 
-trend_long = trend.melt(
-    id_vars="date",
-    value_vars=["import_tanker", "export_tanker"],
-    var_name="jenis",
-    value_name="volume",
-)
-trend_long["jenis"] = trend_long["jenis"].map(
-    {"import_tanker": "Import", "export_tanker": "Export"}
-)
-fig_io = px.bar(
-    trend_long,
-    x="date",
-    y="volume",
-    color="jenis",
-    barmode="group",
-    labels={"date": "Tanggal", "volume": "Volume (ton)", "jenis": "Jenis"},
-    color_discrete_map={"Import": "#1F77B4", "Export": "#FF7F0E"},
-)
-fig_io.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10))
-st.plotly_chart(fig_io, use_container_width=True)
-
-# ----------------------------------------------------------------------------
-# TOP PELABUHAN
-# ----------------------------------------------------------------------------
-st.markdown("### 🏆 Peringkat Pelabuhan")
-
-rank_metric = st.radio(
-    "Urutkan berdasarkan",
-    ["Port Calls Tanker", "Volume Import", "Volume Export", "Total Volume (Import+Export)"],
-    horizontal=True,
-)
-rank_col_map = {
-    "Port Calls Tanker": "portcalls_tanker",
-    "Volume Import": "import_tanker",
-    "Volume Export": "export_tanker",
-    "Total Volume (Import+Export)": "tanker_volume",
-}
-rank_col = rank_col_map[rank_metric]
-
-top_ports = (
-    dff.groupby("portname")[rank_col].sum().sort_values(ascending=False).head(15).reset_index()
-)
-fig_top = px.bar(
-    top_ports.sort_values(rank_col),
-    x=rank_col,
-    y="portname",
-    orientation="h",
-    labels={rank_col: rank_metric, "portname": "Pelabuhan"},
-    color=rank_col,
-    color_continuous_scale="Blues",
-)
-fig_top.update_layout(height=480, margin=dict(l=10, r=10, t=10, b=10), coloraxis_showscale=False)
-st.plotly_chart(fig_top, use_container_width=True)
-
-# ----------------------------------------------------------------------------
-# PERBANDINGAN ANTAR PELABUHAN
-# ----------------------------------------------------------------------------
-st.markdown("### 🔍 Bandingkan Tren Antar Pelabuhan")
-
-compare_ports = st.multiselect(
-    "Pilih hingga 6 pelabuhan untuk dibandingkan",
-    options=all_ports,
-    default=top_ports["portname"].head(3).tolist(),
-    max_selections=6,
-)
-
-if compare_ports:
-    dff_cmp = df[
-        (df["date"] >= start_date)
-        & (df["date"] <= end_date)
-        & (df["portname"].isin(compare_ports))
-    ]
-    trend_cmp = (
-        dff_cmp.groupby(["portname", pd.Grouper(key="date", freq=freq)])["portcalls_tanker"]
+    trend = (
+        dff.set_index("date")
+        .resample(freq)[["portcalls_tanker", "import_tanker", "export_tanker"]]
         .sum()
         .reset_index()
     )
-    fig_cmp = px.line(
-        trend_cmp,
+
+    fig_calls = px.line(
+        trend,
         x="date",
         y="portcalls_tanker",
-        color="portname",
         markers=True,
-        labels={
-            "date": "Tanggal",
-            "portcalls_tanker": "Port Calls Tanker",
-            "portname": "Pelabuhan",
-        },
+        labels={"date": "Tanggal", "portcalls_tanker": "Jumlah Port Calls Tanker"},
     )
-    fig_cmp.update_layout(height=420, margin=dict(l=10, r=10, t=10, b=10))
-    st.plotly_chart(fig_cmp, use_container_width=True)
-else:
-    st.info("Pilih minimal satu pelabuhan untuk melihat perbandingan.")
+    fig_calls.update_traces(
+        line_color="#0B5394", fill="tozeroy", fillcolor="rgba(11,83,148,0.12)"
+    )
+    fig_calls.update_layout(height=360, margin=dict(l=10, r=10, t=10, b=10))
+    st.plotly_chart(fig_calls, use_container_width=True, config=PLOTLY_CONFIG)
+
+    st.markdown("### ⚖️ Volume Import vs Export Tanker")
+
+    trend_long = trend.melt(
+        id_vars="date",
+        value_vars=["import_tanker", "export_tanker"],
+        var_name="jenis",
+        value_name="volume",
+    )
+    trend_long["jenis"] = trend_long["jenis"].map(
+        {"import_tanker": "Import", "export_tanker": "Export"}
+    )
+    fig_io = px.bar(
+        trend_long,
+        x="date",
+        y="volume",
+        color="jenis",
+        barmode="group",
+        labels={"date": "Tanggal", "volume": "Volume (ton)", "jenis": "Jenis"},
+        color_discrete_map={"Import": "#1F77B4", "Export": "#FF7F0E"},
+    )
+    fig_io.update_layout(height=360, margin=dict(l=10, r=10, t=10, b=10))
+    st.plotly_chart(fig_io, use_container_width=True, config=PLOTLY_CONFIG)
 
 # ----------------------------------------------------------------------------
-# SEASONALITY HEATMAP
+# TAB 2: PERINGKAT PELABUHAN & PERBANDINGAN ANTAR PELABUHAN
 # ----------------------------------------------------------------------------
-st.markdown("### 🗓️ Pola Musiman Aktivitas Tanker (Bulan x Tahun)")
-st.caption(
-    "Heatmap ini selalu menampilkan seluruh riwayat data yang tersedia untuk "
-    "pelabuhan terpilih (tidak mengikuti filter rentang tanggal di sidebar), "
-    "supaya pola musiman antar tahun bisa dibandingkan secara utuh."
-)
+with tab_rank:
+    st.markdown("### 🏆 Peringkat Pelabuhan")
 
-# PENTING: pakai `df` penuh (hanya difilter pelabuhan), BUKAN `dff`.
-# `dff` sudah dipotong oleh filter rentang tanggal di sidebar (mis. "1 tahun
-# terakhir"), sehingga bulan-bulan di luar rentang itu tidak punya baris sama
-# sekali. Saat di-pivot, kombinasi (tahun, bulan) yang tidak ada barisnya jadi
-# NaN, lalu fillna(0) mengubahnya jadi 0 -- seolah tidak ada aktivitas tanker,
-# padahal datanya sebenarnya ada, hanya tidak ikut filter tanggal.
-season_source = df[df["portname"].isin(ports_in_scope)]
-season = (
-    season_source.groupby(["year", "month"])["portcalls_tanker"].sum().reset_index()
-)
-season_pivot = season.pivot(index="year", columns="month", values="portcalls_tanker")
-month_names = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"]
-season_pivot = season_pivot.reindex(columns=range(1, 13))
-season_pivot.columns = month_names
-# NaN sengaja dibiarkan (bukan fillna(0)) supaya bulan yang memang belum
-# terjadi (mis. Okt-Des tahun berjalan) tampil kosong/abu-abu di heatmap,
-# bukan seolah-olah nol aktivitas.
+    rank_metric = st.selectbox(
+        "Urutkan berdasarkan",
+        ["Port Calls Tanker", "Volume Import", "Volume Export", "Total Volume (Import+Export)"],
+    )
+    rank_col_map = {
+        "Port Calls Tanker": "portcalls_tanker",
+        "Volume Import": "import_tanker",
+        "Volume Export": "export_tanker",
+        "Total Volume (Import+Export)": "tanker_volume",
+    }
+    rank_col = rank_col_map[rank_metric]
 
-fig_heat = px.imshow(
-    season_pivot,
-    labels=dict(x="Bulan", y="Tahun", color="Port Calls Tanker"),
-    color_continuous_scale="Blues",
-    aspect="auto",
-    text_auto=True,
-)
-fig_heat.update_layout(height=350, margin=dict(l=10, r=10, t=10, b=10))
-st.plotly_chart(fig_heat, use_container_width=True)
+    top_ports = (
+        dff.groupby("portname")[rank_col]
+        .sum()
+        .sort_values(ascending=False)
+        .head(15)
+        .reset_index()
+    )
+    fig_top = px.bar(
+        top_ports.sort_values(rank_col),
+        x=rank_col,
+        y="portname",
+        orientation="h",
+        labels={rank_col: rank_metric, "portname": "Pelabuhan"},
+        color=rank_col,
+        color_continuous_scale="Blues",
+    )
+    fig_top.update_layout(
+        height=460, margin=dict(l=10, r=10, t=10, b=10), coloraxis_showscale=False
+    )
+    st.plotly_chart(fig_top, use_container_width=True, config=PLOTLY_CONFIG)
+
+    st.markdown("### 🔍 Bandingkan Tren Antar Pelabuhan")
+
+    compare_ports = st.multiselect(
+        "Pilih hingga 6 pelabuhan untuk dibandingkan",
+        options=all_ports,
+        default=top_ports["portname"].head(3).tolist(),
+        max_selections=6,
+    )
+
+    if compare_ports:
+        dff_cmp = df[
+            (df["date"] >= start_date)
+            & (df["date"] <= end_date)
+            & (df["portname"].isin(compare_ports))
+        ]
+        trend_cmp = (
+            dff_cmp.groupby(["portname", pd.Grouper(key="date", freq=freq)])[
+                "portcalls_tanker"
+            ]
+            .sum()
+            .reset_index()
+        )
+        fig_cmp = px.line(
+            trend_cmp,
+            x="date",
+            y="portcalls_tanker",
+            color="portname",
+            markers=True,
+            labels={
+                "date": "Tanggal",
+                "portcalls_tanker": "Port Calls Tanker",
+                "portname": "Pelabuhan",
+            },
+        )
+        fig_cmp.update_layout(height=400, margin=dict(l=10, r=10, t=10, b=10))
+        st.plotly_chart(fig_cmp, use_container_width=True, config=PLOTLY_CONFIG)
+    else:
+        st.info("Pilih minimal satu pelabuhan untuk melihat perbandingan.")
 
 # ----------------------------------------------------------------------------
-# KOMPOSISI JENIS KAPAL
+# TAB 3: POLA MUSIMAN & KOMPOSISI JENIS KAPAL
 # ----------------------------------------------------------------------------
-st.markdown("### 🚢 Komposisi Jenis Kapal (Port Calls)")
+with tab_musiman:
+    st.markdown("### 🗓️ Pola Musiman Aktivitas Tanker (Bulan x Tahun)")
+    st.caption(
+        "Heatmap ini selalu menampilkan seluruh riwayat data yang tersedia untuk "
+        "pelabuhan terpilih (tidak mengikuti filter rentang tanggal di sidebar), "
+        "supaya pola musiman antar tahun bisa dibandingkan secara utuh."
+    )
 
-mix = (
-    dff.set_index("date")
-    .resample(freq)[[f"portcalls_{v}" for v in VESSEL_TYPES]]
-    .sum()
-    .reset_index()
-)
-mix_long = mix.melt(id_vars="date", var_name="jenis", value_name="calls")
-mix_long["jenis"] = mix_long["jenis"].str.replace("portcalls_", "").map(VESSEL_LABELS)
+    # PENTING: pakai `df` penuh (hanya difilter pelabuhan), BUKAN `dff`.
+    # `dff` sudah dipotong oleh filter rentang tanggal di sidebar (mis. "1 tahun
+    # terakhir"), sehingga bulan-bulan di luar rentang itu tidak punya baris sama
+    # sekali. Saat di-pivot, kombinasi (tahun, bulan) yang tidak ada barisnya jadi
+    # NaN, lalu fillna(0) mengubahnya jadi 0 -- seolah tidak ada aktivitas tanker,
+    # padahal datanya sebenarnya ada, hanya tidak ikut filter tanggal.
+    season_source = df[df["portname"].isin(ports_in_scope)]
+    season = (
+        season_source.groupby(["year", "month"])["portcalls_tanker"].sum().reset_index()
+    )
+    season_pivot = season.pivot(index="year", columns="month", values="portcalls_tanker")
+    month_names = [
+        "Jan", "Feb", "Mar", "Apr", "Mei", "Jun",
+        "Jul", "Agu", "Sep", "Okt", "Nov", "Des",
+    ]
+    season_pivot = season_pivot.reindex(columns=range(1, 13))
+    season_pivot.columns = month_names
+    # NaN sengaja dibiarkan (bukan fillna(0)) supaya bulan yang memang belum
+    # terjadi (mis. Okt-Des tahun berjalan) tampil kosong/abu-abu di heatmap,
+    # bukan seolah-olah nol aktivitas.
 
-fig_mix = px.area(
-    mix_long,
-    x="date",
-    y="calls",
-    color="jenis",
-    groupnorm="fraction",
-    labels={"date": "Tanggal", "calls": "Proporsi", "jenis": "Jenis Kapal"},
-)
-fig_mix.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10), yaxis_tickformat=".0%")
-st.plotly_chart(fig_mix, use_container_width=True)
+    fig_heat = px.imshow(
+        season_pivot,
+        labels=dict(x="Bulan", y="Tahun", color="Port Calls Tanker"),
+        color_continuous_scale="Blues",
+        aspect="auto",
+        text_auto=True,
+    )
+    fig_heat.update_layout(height=340, margin=dict(l=10, r=10, t=10, b=10))
+    st.plotly_chart(fig_heat, use_container_width=True, config=PLOTLY_CONFIG)
 
-st.caption(
-    "Grafik menunjukkan proporsi port calls tanker dibandingkan jenis kapal lain "
-    "(container, dry bulk, general cargo, roro) dari waktu ke waktu."
-)
+    st.markdown("### 🚢 Komposisi Jenis Kapal (Port Calls)")
+
+    mix = (
+        dff.set_index("date")
+        .resample(freq)[[f"portcalls_{v}" for v in VESSEL_TYPES]]
+        .sum()
+        .reset_index()
+    )
+    mix_long = mix.melt(id_vars="date", var_name="jenis", value_name="calls")
+    mix_long["jenis"] = mix_long["jenis"].str.replace("portcalls_", "").map(VESSEL_LABELS)
+
+    fig_mix = px.area(
+        mix_long,
+        x="date",
+        y="calls",
+        color="jenis",
+        groupnorm="fraction",
+        labels={"date": "Tanggal", "calls": "Proporsi", "jenis": "Jenis Kapal"},
+    )
+    fig_mix.update_layout(
+        height=360, margin=dict(l=10, r=10, t=10, b=10), yaxis_tickformat=".0%"
+    )
+    st.plotly_chart(fig_mix, use_container_width=True, config=PLOTLY_CONFIG)
+
+    st.caption(
+        "Grafik menunjukkan proporsi port calls tanker dibandingkan jenis kapal lain "
+        "(container, dry bulk, general cargo, roro) dari waktu ke waktu."
+    )
 
 # ----------------------------------------------------------------------------
-# TABEL DATA & DOWNLOAD
+# TAB 4: TABEL DATA & DOWNLOAD
 # ----------------------------------------------------------------------------
-st.markdown("### 📋 Data Rinci")
-with st.expander("Lihat & unduh data terfilter"):
+with tab_data:
+    st.markdown("### 📋 Data Rinci")
     table = dff[
         ["date", "portname", "portcalls_tanker", "import_tanker", "export_tanker"]
     ].sort_values("date", ascending=False)
-    st.dataframe(table, use_container_width=True, height=350)
+    st.dataframe(table, use_container_width=True, height=380)
     st.download_button(
         "⬇️ Unduh CSV",
         data=table.to_csv(index=False).encode("utf-8"),
