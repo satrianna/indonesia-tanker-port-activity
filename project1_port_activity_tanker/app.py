@@ -1,11 +1,3 @@
-"""
-Port Activity Snapshot - Analisis Tren Tanker
-Dashboard interaktif untuk menganalisis tren aktivitas kapal tanker
-di pelabuhan-pelabuhan Indonesia (port calls, volume import & export).
-
-Sumber data: indonesia_data_shipment.csv (2019 - 2026)
-"""
-
 from pathlib import Path
 
 import pandas as pd
@@ -289,14 +281,29 @@ else:
 # SEASONALITY HEATMAP
 # ----------------------------------------------------------------------------
 st.markdown("### 🗓️ Pola Musiman Aktivitas Tanker (Bulan x Tahun)")
-
-season = (
-    dff.groupby(["year", "month"])["portcalls_tanker"].sum().reset_index()
+st.caption(
+    "Heatmap ini selalu menampilkan seluruh riwayat data yang tersedia untuk "
+    "pelabuhan terpilih (tidak mengikuti filter rentang tanggal di sidebar), "
+    "supaya pola musiman antar tahun bisa dibandingkan secara utuh."
 )
-season_pivot = season.pivot(index="year", columns="month", values="portcalls_tanker").fillna(0)
+
+# PENTING: pakai `df` penuh (hanya difilter pelabuhan), BUKAN `dff`.
+# `dff` sudah dipotong oleh filter rentang tanggal di sidebar (mis. "1 tahun
+# terakhir"), sehingga bulan-bulan di luar rentang itu tidak punya baris sama
+# sekali. Saat di-pivot, kombinasi (tahun, bulan) yang tidak ada barisnya jadi
+# NaN, lalu fillna(0) mengubahnya jadi 0 -- seolah tidak ada aktivitas tanker,
+# padahal datanya sebenarnya ada, hanya tidak ikut filter tanggal.
+season_source = df[df["portname"].isin(ports_in_scope)]
+season = (
+    season_source.groupby(["year", "month"])["portcalls_tanker"].sum().reset_index()
+)
+season_pivot = season.pivot(index="year", columns="month", values="portcalls_tanker")
 month_names = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"]
 season_pivot = season_pivot.reindex(columns=range(1, 13))
 season_pivot.columns = month_names
+# NaN sengaja dibiarkan (bukan fillna(0)) supaya bulan yang memang belum
+# terjadi (mis. Okt-Des tahun berjalan) tampil kosong/abu-abu di heatmap,
+# bukan seolah-olah nol aktivitas.
 
 fig_heat = px.imshow(
     season_pivot,
