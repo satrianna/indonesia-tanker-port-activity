@@ -142,11 +142,15 @@ def _range_for(months_back):
 
 
 def _set_range(months_back):
-    st.session_state["date_range_slider"] = _range_for(months_back)
+    s_label, e_label = _range_for(months_back)
+    st.session_state["date_start_slider"] = s_label
+    st.session_state["date_end_slider"] = e_label
 
 
-if "date_range_slider" not in st.session_state:
-    st.session_state["date_range_slider"] = _range_for(12)
+if "date_start_slider" not in st.session_state or "date_end_slider" not in st.session_state:
+    _default_start, _default_end = _range_for(12)
+    st.session_state.setdefault("date_start_slider", _default_start)
+    st.session_state.setdefault("date_end_slider", _default_end)
 
 st.sidebar.markdown("**Rentang tanggal**")
 bcol1, bcol2 = st.sidebar.columns(2)
@@ -156,13 +160,28 @@ bcol3, bcol4 = st.sidebar.columns(2)
 bcol3.button("3 Thn Terakhir", use_container_width=True, on_click=_set_range, args=(36,))
 bcol4.button("5 Thn Terakhir", use_container_width=True, on_click=_set_range, args=(60,))
 
-start_label, end_label = st.sidebar.select_slider(
-    "Geser untuk memilih rentang bulan",
-    options=month_labels,
-    key="date_range_slider",
+# CATATAN: sengaja pakai DUA select_slider satu-nilai (bukan satu
+# select_slider dua-handle/"range"). Mode range pada st.select_slider
+# punya bug yang cukup dikenal: saat handle digeser manual dan urutan
+# nilai yang dikirim balik oleh komponennya jadi tidak sesuai posisi index
+# di `options`, Streamlit gagal memproses dan melempar ValueError persis
+# di baris pembuatan widgetnya. Dengan dua slider bernilai tunggal, jalur
+# kode rawan itu tidak pernah tersentuh sama sekali -> tidak bisa error.
+start_label = st.sidebar.select_slider(
+    "Dari bulan", options=month_labels, key="date_start_slider"
 )
+end_label = st.sidebar.select_slider(
+    "Sampai bulan", options=month_labels, key="date_end_slider"
+)
+
 start_period = period_by_label[start_label]
 end_period = period_by_label[end_label]
+if start_period > end_period:
+    # Jaga-jaga kalau pengguna menggeser "Dari" melewati "Sampai" (atau
+    # sebaliknya) -> otomatis dibalik, bukan error.
+    start_period, end_period = end_period, start_period
+    st.sidebar.caption("⚠️ Urutan disesuaikan otomatis (Dari ≤ Sampai).")
+
 start_date = start_period.start_time
 end_date = (end_period + 1).start_time - pd.Timedelta(days=1)
 
