@@ -160,17 +160,17 @@ bcol3, bcol4 = st.sidebar.columns(2)
 bcol3.button("3 Thn Terakhir", use_container_width=True, on_click=_set_range, args=(36,))
 bcol4.button("5 Thn Terakhir", use_container_width=True, on_click=_set_range, args=(60,))
 
-# CATATAN: sengaja pakai DUA select_slider satu-nilai (bukan satu
-# select_slider dua-handle/"range"). Mode range pada st.select_slider
-# punya bug yang cukup dikenal: saat handle digeser manual dan urutan
-# nilai yang dikirim balik oleh komponennya jadi tidak sesuai posisi index
-# di `options`, Streamlit gagal memproses dan melempar ValueError persis
-# di baris pembuatan widgetnya. Dengan dua slider bernilai tunggal, jalur
-# kode rawan itu tidak pernah tersentuh sama sekali -> tidak bisa error.
-start_label = st.sidebar.select_slider(
+# CATATAN: pakai selectbox (dropdown), BUKAN select_slider, untuk "Dari
+# bulan" / "Sampai bulan". select_slider dengan opsi sebanyak ini (93 bulan)
+# rawan gagal render di layar HP yang sempit (track slider harus menata
+# puluhan label sekaligus dalam lebar terbatas) -- di beberapa browser
+# mobile widget ini bisa jadi tidak muncul sama sekali. Dropdown jauh lebih
+# stabil lintas perangkat, dan tap-lalu-pilih justru lebih mudah di HP
+# dibanding menggeser slider presisi dengan jari.
+start_label = st.sidebar.selectbox(
     "Dari bulan", options=month_labels, key="date_start_slider"
 )
-end_label = st.sidebar.select_slider(
+end_label = st.sidebar.selectbox(
     "Sampai bulan", options=month_labels, key="date_end_slider"
 )
 
