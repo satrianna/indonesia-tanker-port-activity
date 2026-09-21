@@ -26,23 +26,29 @@ st.set_page_config(
     page_title="Port Activity Snapshot - Tren Tanker",
     page_icon="🛢️",
     layout="wide",
-    # "auto" (bukan "expanded"): sidebar otomatis collapsed di layar sempit
-    # (HP) dan tetap terbuka di layar lebar (laptop/desktop), tanpa perlu
-    # deteksi device manual.
-    initial_sidebar_state="auto",
+    # "expanded": sidebar terbuka duluan saat pertama kali dibuka, baik di
+    # laptop maupun HP, supaya filter langsung terlihat. Tombol panah
+    # bawaan Streamlit di pojok kiri atas sidebar tetap bisa dipakai untuk
+    # menyembunyikan/memunculkan lagi kapan saja, di kedua jenis perangkat.
+    initial_sidebar_state="expanded",
 )
 
 # Sedikit CSS untuk merapikan tampilan di layar sempit (HP):
 # - padding halaman dipangkas biar tidak boros ruang
 # - ukuran angka/label metric dikecilkan sedikit di layar <640px biar tidak wrap
-# - menu titik-tiga bawaan Streamlit (Deploy/Settings) disembunyikan karena
-#   tidak relevan untuk pengunjung publik; hapus blok #stToolbar ini kalau
-#   Anda (sebagai developer) masih perlu mengaksesnya lewat UI app.
 # - touch-action: pan-y pada grafik Plotly & tabel data supaya saat pengguna
 #   scroll halaman di HP dan jarinya tidak sengaja "kepencet" grafik/tabel,
 #   browser tetap memperlakukan gesture itu sebagai scroll vertikal biasa,
 #   bukan drag/zoom/geser internal milik komponennya. Ini yang menyebabkan
 #   tampilan terlihat "kegeser" sebelumnya.
+#
+# CATATAN: sebelumnya di sini ada CSS untuk menyembunyikan menu titik-tiga
+# (Deploy/Settings) lewat `[data-testid="stToolbar"]`. Itu SENGAJA dihapus
+# karena ternyata ikut menyembunyikan tombol panah bawaan Streamlit untuk
+# membuka/menutup sidebar, sehingga sidebar jadi tidak bisa diakses sama
+# sekali baik di HP maupun laptop. Kalau suatu saat ingin menyembunyikan
+# menu Deploy lagi, gunakan selector yang lebih spesifik (misalnya khusus
+# tombol Deploy-nya saja), bukan seluruh `stToolbar`.
 st.markdown(
     """
     <style>
@@ -63,7 +69,6 @@ st.markdown(
             h1 { font-size: 1.35rem !important; }
             h3 { font-size: 1.05rem !important; }
         }
-        [data-testid="stToolbar"] { visibility: hidden; }
 
         /* Kunci gesture sentuh agar chart & tabel tidak ikut "kegeser"
            saat tersenggol jari ketika pengguna sedang scroll halaman. */
