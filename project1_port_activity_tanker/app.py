@@ -17,6 +17,8 @@ from datetime import timedelta
 
 APP_DIR = Path(__file__).parent
 
+MONTH_NAMES_ID = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"]
+
 # ----------------------------------------------------------------------------
 # KONFIGURASI HALAMAN
 # ----------------------------------------------------------------------------
@@ -36,6 +38,11 @@ st.set_page_config(
 # - menu titik-tiga bawaan Streamlit (Deploy/Settings) disembunyikan karena
 #   tidak relevan untuk pengunjung publik; hapus blok #stToolbar ini kalau
 #   Anda (sebagai developer) masih perlu mengaksesnya lewat UI app.
+# - touch-action: pan-y pada grafik Plotly & tabel data supaya saat pengguna
+#   scroll halaman di HP dan jarinya tidak sengaja "kepencet" grafik/tabel,
+#   browser tetap memperlakukan gesture itu sebagai scroll vertikal biasa,
+#   bukan drag/zoom/geser internal milik komponennya. Ini yang menyebabkan
+#   tampilan terlihat "kegeser" sebelumnya.
 st.markdown(
     """
     <style>
@@ -57,22 +64,34 @@ st.markdown(
             h3 { font-size: 1.05rem !important; }
         }
         [data-testid="stToolbar"] { visibility: hidden; }
+
+        /* Kunci gesture sentuh agar chart & tabel tidak ikut "kegeser"
+           saat tersenggol jari ketika pengguna sedang scroll halaman. */
+        .js-plotly-plot, .js-plotly-plot .plot-container, .js-plotly-plot .svg-container {
+            touch-action: pan-y !important;
+        }
+        [data-testid="stDataFrame"], [data-testid="stDataFrame"] * {
+            touch-action: pan-y !important;
+        }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-PLOTLY_CONFIG = {"displayModeBar": False}  # toolbar zoom/pan Plotly dimatikan
-                                           # -> lebih bersih & mudah disentuh di HP
+# displayModeBar: toolbar zoom/pan Plotly dimatikan -> lebih bersih di HP
+# scrollZoom & doubleClick dimatikan juga supaya scroll/double-tap pengguna
+# tidak pernah ditangkap sebagai perintah zoom oleh grafik.
+PLOTLY_CONFIG = {"displayModeBar": False, "scrollZoom": False, "doubleClick": False}
 
-VESSEL_TYPES = ["tanker", "container", "dry_bulk", "general_cargo", "roro"]
-VESSEL_LABELS = {
-    "tanker": "Tanker",
-    "container": "Container",
-    "dry_bulk": "Dry Bulk",
-    "general_cargo": "General Cargo",
-    "roro": "RoRo",
-}
+
+def lock_figure(fig):
+    """Kunci interaksi drag/zoom pada chart Plotly supaya saat pengguna scroll
+    dan jarinya tidak sengaja menyentuh grafik di HP, tampilan (skala/posisi
+    sumbu) tidak ikut berubah. Hover tooltip tetap berfungsi normal."""
+    fig.update_layout(dragmode=False)
+    fig.update_xaxes(fixedrange=True)
+    fig.update_yaxes(fixedrange=True)
+    return fig
 
 
 # ----------------------------------------------------------------------------
@@ -94,15 +113,58 @@ MIN_DATE, MAX_DATE = df["date"].min().date(), df["date"].max().date()
 # ----------------------------------------------------------------------------
 st.sidebar.title("🛢️ Filter Analisis")
 
-date_range = st.sidebar.date_input(
-    "Rentang tanggal",
-    value=(MAX_DATE - timedelta(days=365), MAX_DATE),
-    min_value=MIN_DATE,
-    max_value=MAX_DATE,
+# --- Rentang tanggal ---------------------------------------------------------
+# Dipilih lewat slider per-bulan (bukan kalender date_input) supaya pengguna
+# bisa langsung "melompat" dari data paling awal ke paling akhir (2019-2026)
+# dengan menggeser satu handle, tanpa perlu klik mundur bulan-per-bulan
+# seperti kalender pemesanan tiket pesawat. Empat tombol pintasan di atasnya
+# untuk rentang yang paling sering dipakai.
+month_index = pd.period_range(
+    start=pd.Timestamp(MIN_DATE).to_period("M"),
+    end=pd.Timestamp(MAX_DATE).to_period("M"),
+    freq="M",
 )
-if len(date_range) != 2:
-    st.stop()
-start_date, end_date = pd.Timestamp(date_range[0]), pd.Timestamp(date_range[1])
+
+
+def _period_label(p: pd.Period) -> str:
+    return f"{MONTH_NAMES_ID[p.month - 1]} {p.year}"
+
+
+period_by_label = {_period_label(p): p for p in month_index}
+month_labels = list(period_by_label.keys())
+
+
+def _range_for(months_back):
+    """months_back=None artinya seluruh data yang tersedia."""
+    end_p = month_index[-1]
+    start_p = month_index[0] if months_back is None else max(end_p - (months_back - 1), month_index[0])
+    return (_period_label(start_p), _period_label(end_p))
+
+
+def _set_range(months_back):
+    st.session_state["date_range_slider"] = _range_for(months_back)
+
+
+if "date_range_slider" not in st.session_state:
+    st.session_state["date_range_slider"] = _range_for(12)
+
+st.sidebar.markdown("**Rentang tanggal**")
+bcol1, bcol2 = st.sidebar.columns(2)
+bcol1.button("Semua Data", use_container_width=True, on_click=_set_range, args=(None,))
+bcol2.button("1 Thn Terakhir", use_container_width=True, on_click=_set_range, args=(12,))
+bcol3, bcol4 = st.sidebar.columns(2)
+bcol3.button("3 Thn Terakhir", use_container_width=True, on_click=_set_range, args=(36,))
+bcol4.button("5 Thn Terakhir", use_container_width=True, on_click=_set_range, args=(60,))
+
+start_label, end_label = st.sidebar.select_slider(
+    "Geser untuk memilih rentang bulan",
+    options=month_labels,
+    key="date_range_slider",
+)
+start_period = period_by_label[start_label]
+end_period = period_by_label[end_label]
+start_date = start_period.start_time
+end_date = (end_period + 1).start_time - pd.Timedelta(days=1)
 
 all_ports = sorted(df["portname"].unique())
 default_ports = (
@@ -116,8 +178,10 @@ selected_ports = st.sidebar.multiselect(
 )
 ports_in_scope = selected_ports if selected_ports else all_ports
 
-freq_label = st.sidebar.radio("Agregasi waktu", ["Harian", "Mingguan", "Bulanan"], index=2)
-freq_map = {"Harian": "D", "Mingguan": "W", "Bulanan": "MS"}
+freq_label = st.sidebar.radio(
+    "Agregasi waktu", ["Harian", "Mingguan", "Bulanan", "Tahunan"], index=2
+)
+freq_map = {"Harian": "D", "Mingguan": "W", "Bulanan": "MS", "Tahunan": "YS"}
 freq = freq_map[freq_label]
 
 st.sidebar.markdown("---")
@@ -207,7 +271,7 @@ st.markdown("---")
 # tap untuk pindah bagian, tidak perlu scroll panjang seperti sebelumnya.
 # ----------------------------------------------------------------------------
 tab_tren, tab_rank, tab_musiman, tab_data = st.tabs(
-    ["📈 Tren", "🏆 Peringkat & Perbandingan", "🗓️ Musiman & Komposisi", "📋 Data"]
+    ["📈 Tren", "🏆 Peringkat & Perbandingan", "🗓️ Musiman", "📋 Data"]
 )
 
 # ----------------------------------------------------------------------------
@@ -234,6 +298,7 @@ with tab_tren:
         line_color="#0B5394", fill="tozeroy", fillcolor="rgba(11,83,148,0.12)"
     )
     fig_calls.update_layout(height=360, margin=dict(l=10, r=10, t=10, b=10))
+    fig_calls = lock_figure(fig_calls)
     st.plotly_chart(fig_calls, use_container_width=True, config=PLOTLY_CONFIG)
 
     st.markdown("### ⚖️ Volume Import vs Export Tanker")
@@ -257,6 +322,7 @@ with tab_tren:
         color_discrete_map={"Import": "#1F77B4", "Export": "#FF7F0E"},
     )
     fig_io.update_layout(height=360, margin=dict(l=10, r=10, t=10, b=10))
+    fig_io = lock_figure(fig_io)
     st.plotly_chart(fig_io, use_container_width=True, config=PLOTLY_CONFIG)
 
 # ----------------------------------------------------------------------------
@@ -296,6 +362,7 @@ with tab_rank:
     fig_top.update_layout(
         height=460, margin=dict(l=10, r=10, t=10, b=10), coloraxis_showscale=False
     )
+    fig_top = lock_figure(fig_top)
     st.plotly_chart(fig_top, use_container_width=True, config=PLOTLY_CONFIG)
 
     st.markdown("### 🔍 Bandingkan Tren Antar Pelabuhan")
@@ -333,12 +400,13 @@ with tab_rank:
             },
         )
         fig_cmp.update_layout(height=400, margin=dict(l=10, r=10, t=10, b=10))
+        fig_cmp = lock_figure(fig_cmp)
         st.plotly_chart(fig_cmp, use_container_width=True, config=PLOTLY_CONFIG)
     else:
         st.info("Pilih minimal satu pelabuhan untuk melihat perbandingan.")
 
 # ----------------------------------------------------------------------------
-# TAB 3: POLA MUSIMAN & KOMPOSISI JENIS KAPAL
+# TAB 3: POLA MUSIMAN
 # ----------------------------------------------------------------------------
 with tab_musiman:
     st.markdown("### 🗓️ Pola Musiman Aktivitas Tanker (Bulan x Tahun)")
@@ -358,65 +426,70 @@ with tab_musiman:
     season = (
         season_source.groupby(["year", "month"])["portcalls_tanker"].sum().reset_index()
     )
-    season_pivot = season.pivot(index="year", columns="month", values="portcalls_tanker")
-    month_names = [
-        "Jan", "Feb", "Mar", "Apr", "Mei", "Jun",
-        "Jul", "Agu", "Sep", "Okt", "Nov", "Des",
-    ]
-    season_pivot = season_pivot.reindex(columns=range(1, 13))
-    season_pivot.columns = month_names
+    # Bulan dijadikan BARIS dan tahun dijadikan KOLOM (dibalik dari versi
+    # sebelumnya) supaya jumlah kolom tetap 12 walau data terus bertambah
+    # tahun ke tahun -- lebih pas untuk lebar layar HP yang sempit, karena
+    # yang bertambah cukup di sumbu vertikal (scroll ke bawah itu wajar di HP).
+    season_pivot = season.pivot(index="month", columns="year", values="portcalls_tanker")
+    season_pivot = season_pivot.reindex(index=range(1, 13)).sort_index(axis=1)
+    season_pivot.index = MONTH_NAMES_ID
     # NaN sengaja dibiarkan (bukan fillna(0)) supaya bulan yang memang belum
     # terjadi (mis. Okt-Des tahun berjalan) tampil kosong/abu-abu di heatmap,
     # bukan seolah-olah nol aktivitas.
 
     fig_heat = px.imshow(
         season_pivot,
-        labels=dict(x="Bulan", y="Tahun", color="Port Calls Tanker"),
+        labels=dict(x="Tahun", y="Bulan", color="Port Calls"),
         color_continuous_scale="Blues",
         aspect="auto",
         text_auto=True,
     )
-    fig_heat.update_layout(height=340, margin=dict(l=10, r=10, t=10, b=10))
+    fig_heat.update_layout(
+        height=460,
+        margin=dict(l=10, r=10, t=10, b=10),
+        coloraxis_showscale=False,  # skala warna dilepas -> lebih banyak ruang untuk kotak heatmap di HP
+    )
+    fig_heat.update_traces(textfont_size=12)
+    fig_heat.update_xaxes(side="bottom", type="category")
+    fig_heat = lock_figure(fig_heat)
     st.plotly_chart(fig_heat, use_container_width=True, config=PLOTLY_CONFIG)
-
-    st.markdown("### 🚢 Komposisi Jenis Kapal (Port Calls)")
-
-    mix = (
-        dff.set_index("date")
-        .resample(freq)[[f"portcalls_{v}" for v in VESSEL_TYPES]]
-        .sum()
-        .reset_index()
-    )
-    mix_long = mix.melt(id_vars="date", var_name="jenis", value_name="calls")
-    mix_long["jenis"] = mix_long["jenis"].str.replace("portcalls_", "").map(VESSEL_LABELS)
-
-    fig_mix = px.area(
-        mix_long,
-        x="date",
-        y="calls",
-        color="jenis",
-        groupnorm="fraction",
-        labels={"date": "Tanggal", "calls": "Proporsi", "jenis": "Jenis Kapal"},
-    )
-    fig_mix.update_layout(
-        height=360, margin=dict(l=10, r=10, t=10, b=10), yaxis_tickformat=".0%"
-    )
-    st.plotly_chart(fig_mix, use_container_width=True, config=PLOTLY_CONFIG)
-
-    st.caption(
-        "Grafik menunjukkan proporsi port calls tanker dibandingkan jenis kapal lain "
-        "(container, dry bulk, general cargo, roro) dari waktu ke waktu."
-    )
 
 # ----------------------------------------------------------------------------
 # TAB 4: TABEL DATA & DOWNLOAD
 # ----------------------------------------------------------------------------
 with tab_data:
     st.markdown("### 📋 Data Rinci")
-    table = dff[
-        ["date", "portname", "portcalls_tanker", "import_tanker", "export_tanker"]
-    ].sort_values("date", ascending=False)
-    st.dataframe(table, use_container_width=True, height=380)
+    st.caption(
+        f"Menampilkan data sesuai filter **Rentang tanggal** di sidebar, saat ini "
+        f"**{start_date.date()}** – **{end_date.date()}**. Data lengkap tersedia dari "
+        f"**{MIN_DATE}** s/d **{MAX_DATE}** — klik **\"Semua Data\"** di sidebar atau "
+        f"geser slider untuk melihat tahun-tahun lain."
+    )
+    table = (
+        dff[["date", "portname", "portcalls_tanker", "import_tanker", "export_tanker"]]
+        .sort_values("date", ascending=False)
+        .rename(
+            columns={
+                "date": "Tanggal",
+                "portname": "Pelabuhan",
+                "portcalls_tanker": "Port Calls",
+                "import_tanker": "Import (ton)",
+                "export_tanker": "Export (ton)",
+            }
+        )
+    )
+    st.dataframe(
+        table,
+        use_container_width=True,
+        height=380,
+        hide_index=True,
+        column_config={
+            "Tanggal": st.column_config.DateColumn("Tanggal", width="small"),
+            "Port Calls": st.column_config.NumberColumn("Port Calls", width="small"),
+            "Import (ton)": st.column_config.NumberColumn("Import (ton)", width="small", format="%d"),
+            "Export (ton)": st.column_config.NumberColumn("Export (ton)", width="small", format="%d"),
+        },
+    )
     st.download_button(
         "⬇️ Unduh CSV",
         data=table.to_csv(index=False).encode("utf-8"),
